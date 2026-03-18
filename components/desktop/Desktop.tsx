@@ -2,7 +2,19 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { DesktopIcon, DesktopSettings, ContextMenuState, EditModalState } from '@/lib/desktop-types'
-import { loadIcons, saveIcons, loadSettings, saveSettings, DEFAULT_ICONS, DEFAULT_SETTINGS, saveWallpaperBlob, loadWallpaperBlob, loadIconBlob, isIconBlobRef } from '@/lib/desktop-storage'
+import { 
+  loadIcons, 
+  saveIcons, 
+  loadSettings, 
+  saveSettings, 
+  DEFAULT_ICONS, 
+  DEFAULT_SETTINGS, 
+  saveWallpaperBlob, 
+  loadWallpaperBlob, 
+  loadIconBlob, 
+  saveIconBlob,
+  isIconBlobRef 
+} from '@/lib/desktop-storage'
 import { Language, t } from '@/lib/i18n'
 import DesktopCanvas from './DesktopCanvas'
 import SettingsPanel from './SettingsPanel'
@@ -29,15 +41,13 @@ export default function Desktop() {
   const importFileRef = useRef<HTMLInputElement>(null)
   const lang: Language = settings.language
 
-  // Load from localStorage on mount, then restore large blobs from IndexedDB
   useEffect(() => {
-    const savedIcons = loadIcons()
-    const savedSettings = loadSettings()
+    const initDesktop = async () => {
+      const savedIcons = loadIcons()
+      const savedSettings = loadSettings()
 
-    // Restore icon images that were stored in IndexedDB
-    const restoreIconImages = async (rawIcons: DesktopIcon[]) => {
-      const resolved = await Promise.all(
-        rawIcons.map(async (ic) => {
+      const resolvedIcons = await Promise.all(
+        savedIcons.map(async (ic) => {
           if (ic.image && isIconBlobRef(ic.image)) {
             const blob = await loadIconBlob(ic.image)
             return { ...ic, image: blob ?? '' }
@@ -45,28 +55,36 @@ export default function Desktop() {
           return ic
         })
       )
-      setIcons(resolved)
-    }
+      
+      setIcons(resolvedIcons)
 
-    restoreIconImages(savedIcons)
-
-    // If settings had a data-URL wallpaper previously stored in IDB, restore it
-    if (savedSettings.wallpaper === '__idb__') {
-      loadWallpaperBlob().then((blob) => {
+      if (savedSettings.wallpaper === '__idb__') {
+        const blob = await loadWallpaperBlob()
         setSettings({ ...savedSettings, wallpaper: blob ?? DEFAULT_SETTINGS.wallpaper })
-      })
-    } else {
-      setSettings(savedSettings)
+      } else {
+        setSettings(savedSettings)
+      }
+      setMounted(true)
     }
-    setMounted(true)
+
+    initDesktop()
   }, [])
 
-  // Persist icons
+  // حفظ الأيقونات مع التأكد من تخزين الصور الكبيرة في IndexedDB أولاً
   useEffect(() => {
-    if (mounted) saveIcons(icons)
+    const persist = async () => {
+      if (!mounted) return
+      
+      for (const icon of icons) {
+        if (icon.image && icon.image.startsWith('data:')) {
+          await saveIconBlob(icon.id, icon.image)
+        }
+      }
+      saveIcons(icons)
+    }
+    persist()
   }, [icons, mounted])
 
-  // Persist settings — also save large wallpaper blobs to IndexedDB
   useEffect(() => {
     if (!mounted) return
     saveSettings(settings)
@@ -75,7 +93,6 @@ export default function Desktop() {
     }
   }, [settings, mounted])
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
@@ -113,12 +130,17 @@ export default function Desktop() {
   }, [])
 
   const handleSaveIcon = useCallback(async (icon: DesktopIcon) => {
-    // If image is an IDB ref, resolve it to a data URL for immediate display
     let displayIcon = icon
-    if (icon.image && isIconBlobRef(icon.image)) {
+    // إذا كانت الصورة جديدة (data URL)، احفظها فوراً في IDB
+    if (icon.image && icon.image.startsWith('data:')) {
+      await saveIconBlob(icon.id, icon.image)
+    } 
+    // إذا كان المرجع موجوداً، قم بحله للعرض الفوري
+    else if (icon.image && isIconBlobRef(icon.image)) {
       const blob = await loadIconBlob(icon.image)
       if (blob) displayIcon = { ...icon, image: blob }
     }
+
     setIcons((prev) => {
       const idx = prev.findIndex((ic) => ic.id === displayIcon.id)
       if (idx >= 0) {
@@ -207,7 +229,7 @@ export default function Desktop() {
       className="fixed inset-0 overflow-hidden"
       style={{ direction: rtl ? 'rtl' : 'ltr', fontFamily: 'inherit' }}
     >
-      {/* Smart Wallpaper: Image or Video */}
+      {/* Smart Wallpaper */}
       {settings.wallpaper?.includes('video') || settings.wallpaper?.match(/\.(mp4|webm)$/i) ? (
         <video
           key={settings.wallpaper}
@@ -233,22 +255,17 @@ export default function Desktop() {
         />
       )}
 
-      {/* Overlay tint for light/dark */}
       <div
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: isDark
-            ? 'rgba(0,0,0,0.18)'
-            : 'rgba(255,255,255,0.12)',
+          background: isDark ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.12)',
         }}
       />
       
-      {/* الأدوات العائمة (Widgets) */}
       <ClockWidget lang={lang} isDark={isDark} />
       <StickyNoteWidget />
       <YouTubeWidget />
 
-      {/* Desktop canvas with icons */}
       <DesktopCanvas
         icons={icons}
         settings={settings}
@@ -260,7 +277,6 @@ export default function Desktop() {
         onDesktopClick={() => { setSelectedIconId(null); setContextMenu(null) }}
       />
 
-      {/* Top bar */}
       <div
         className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2"
         style={{
@@ -270,39 +286,25 @@ export default function Desktop() {
           direction: rtl ? 'rtl' : 'ltr',
         }}
       >
-        {/* Left: app name + time */}
         <div className="flex items-center gap-3">
           <span className="text-white/90 font-medium text-sm">{t(lang, 'appName')}</span>
           <Clock />
         </div>
 
-        {/* Right: controls */}
         <div className="flex items-center gap-2">
-          {/* Search */}
-          <TopBarButton
-            onClick={() => setShowSearch(true)}
-            title={t(lang, 'search')}
-          >
+          <TopBarButton onClick={() => setShowSearch(true)} title={t(lang, 'search')}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </TopBarButton>
 
-          {/* Add icon */}
-          <TopBarButton
-            onClick={() => setEditModal({ mode: 'add', spawnX: 100, spawnY: 100 })}
-            title={t(lang, 'addIcon')}
-          >
+          <TopBarButton onClick={() => setEditModal({ mode: 'add', spawnX: 100, spawnY: 100 })} title={t(lang, 'addIcon')}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
           </TopBarButton>
 
-          {/* Settings */}
-          <TopBarButton
-            onClick={() => setShowSettings(true)}
-            title={t(lang, 'settings')}
-          >
+          <TopBarButton onClick={() => setShowSettings(true)} title={t(lang, 'settings')}>
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                 d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
@@ -311,11 +313,7 @@ export default function Desktop() {
             </svg>
           </TopBarButton>
 
-          {/* Theme toggle */}
-          <TopBarButton
-            onClick={() => handleSettingsChange({ theme: isDark ? 'light' : 'dark' })}
-            title={isDark ? t(lang, 'lightMode') : t(lang, 'darkMode')}
-          >
+          <TopBarButton onClick={() => handleSettingsChange({ theme: isDark ? 'light' : 'dark' })} title={isDark ? t(lang, 'lightMode') : t(lang, 'darkMode')}>
             {isDark ? (
               <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 3v1m0 16v1M4.22 4.22l.71.71m12.14 12.14.71.71M3 12H2m20 0h-1M4.22 19.78l.71-.71M18.36 5.64l.71-.71M12 5a7 7 0 000 14A7 7 0 0012 5z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" fill="none"/>
@@ -327,17 +325,12 @@ export default function Desktop() {
             )}
           </TopBarButton>
 
-          {/* Language toggle */}
-          <TopBarButton
-            onClick={() => handleSettingsChange({ language: lang === 'ar' ? 'en' : 'ar' })}
-            title={lang === 'ar' ? 'English' : 'العربية'}
-          >
+          <TopBarButton onClick={() => handleSettingsChange({ language: lang === 'ar' ? 'en' : 'ar' })} title={lang === 'ar' ? 'English' : 'العربية'}>
             <span className="text-xs font-medium">{lang === 'ar' ? 'EN' : 'ع'}</span>
           </TopBarButton>
         </div>
       </div>
 
-      {/* Context menu */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
@@ -357,17 +350,10 @@ export default function Desktop() {
         />
       )}
 
-      {/* Settings panel */}
       {showSettings && (
-        <SettingsPanel
-          settings={settings}
-          lang={lang}
-          onSettingsChange={handleSettingsChange}
-          onClose={() => setShowSettings(false)}
-        />
+        <SettingsPanel settings={settings} lang={lang} onSettingsChange={handleSettingsChange} onClose={() => setShowSettings(false)} />
       )}
 
-      {/* Icon edit/add modal */}
       {editModal && (
         <IconModal
           mode={editModal.mode}
@@ -382,7 +368,6 @@ export default function Desktop() {
         />
       )}
 
-      {/* Search */}
       {showSearch && (
         <SearchBar
           icons={icons}
@@ -396,42 +381,18 @@ export default function Desktop() {
         />
       )}
 
-      {/* Confirm reset */}
       {confirmReset && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center"
-          style={{ backdropFilter: 'blur(4px)', backgroundColor: 'rgba(0,0,0,0.6)' }}
-        >
-          <div
-            className="p-6 space-y-4 border border-white/10 shadow-2xl"
-            style={{
-              width: 320,
-              background: 'rgba(20, 22, 30, 0.97)',
-              backdropFilter: `blur(${settings.uiBlurIntensity}px)`,
-              borderRadius: settings.cornerRadius,
-              direction: rtl ? 'rtl' : 'ltr',
-            }}
-          >
+        <div className="fixed inset-0 z-[200] flex items-center justify-center" style={{ backdropFilter: 'blur(4px)', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+          <div className="p-6 space-y-4 border border-white/10 shadow-2xl" style={{ width: 320, background: 'rgba(20, 22, 30, 0.97)', backdropFilter: `blur(${settings.uiBlurIntensity}px)`, borderRadius: settings.cornerRadius, direction: rtl ? 'rtl' : 'ltr' }}>
             <p className="text-sm text-white/80 leading-relaxed">{t(lang, 'confirmReset')}</p>
             <div className="flex gap-2">
-              <button
-                onClick={() => setConfirmReset(false)}
-                className="flex-1 py-2 rounded-lg text-sm bg-white/8 border border-white/10 text-white/60 hover:bg-white/12"
-              >
-                {t(lang, 'no')}
-              </button>
-              <button
-                onClick={confirmResetAction}
-                className="flex-1 py-2 rounded-lg text-sm bg-red-500/80 border border-red-400/40 text-white hover:bg-red-500"
-              >
-                {t(lang, 'yes')}
-              </button>
+              <button onClick={() => setConfirmReset(false)} className="flex-1 py-2 rounded-lg text-sm bg-white/8 border border-white/10 text-white/60 hover:bg-white/12">{t(lang, 'no')}</button>
+              <button onClick={confirmResetAction} className="flex-1 py-2 rounded-lg text-sm bg-red-500/80 border border-red-400/40 text-white hover:bg-red-500">{t(lang, 'yes')}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Hidden file inputs */}
       <input ref={importFileRef} type="file" accept=".json" className="hidden" onChange={handleImportFile} />
     </div>
   )
@@ -439,11 +400,7 @@ export default function Desktop() {
 
 function TopBarButton({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title?: string }) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      className="w-7 h-7 rounded-lg flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors"
-    >
+    <button onClick={onClick} title={title} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-colors">
       {children}
     </button>
   )
