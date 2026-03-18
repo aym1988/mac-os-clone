@@ -40,7 +40,7 @@ export default function Desktop() {
   const importFileRef = useRef<HTMLInputElement>(null)
   const lang: Language = settings.language
 
-  // 1. تحميل البيانات وإجبارية النقاء (إلغاء Blur)
+  // 1. استعادة البيانات مع ضمان نقاء الخلفية (إلغاء Blur تماماً)
   useEffect(() => {
     const initDesktop = async () => {
       const savedIcons = loadIcons()
@@ -57,6 +57,7 @@ export default function Desktop() {
       )
       
       setIcons(resolvedIcons)
+      // إجبار wallpaperBlur على 0 لضمان اللون الأسود الداكن
       const pureSettings = { ...savedSettings, wallpaperBlur: 0 };
 
       if (savedSettings.wallpaper === '__idb__') {
@@ -70,7 +71,7 @@ export default function Desktop() {
     initDesktop()
   }, [])
 
-  // 2. مزامنة الحفظ
+  // 2. مزامنة الحفظ في التخزين الدائم
   useEffect(() => {
     const persist = async () => {
       if (!mounted) return
@@ -92,7 +93,7 @@ export default function Desktop() {
     }
   }, [settings, mounted])
 
-  // 3. وظائف الاستيراد والتصدير المصلحة
+  // 3. معالجة وظائف القائمة اليمنى (ContextMenu) المصلحة
   const handleExport = useCallback(() => {
     const data = { icons, settings }
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -113,13 +114,24 @@ export default function Desktop() {
         const data = JSON.parse(ev.target?.result as string)
         if (data.icons) setIcons(data.icons)
         if (data.settings) setSettings((prev) => ({ ...prev, ...data.settings, wallpaperBlur: 0 }))
-      } catch (err) {
-        console.error("Import failed", err)
-      }
+      } catch (err) { console.error("Import failed", err) }
     }
     reader.readAsText(file)
     e.target.value = ''
   }, [])
+
+  const handleAutoAlign = useCallback(() => {
+    const iconW = settings.iconSize + settings.iconSpacing
+    const iconH = settings.iconSize + 40 + settings.iconSpacing
+    const perRow = Math.floor((window.innerHeight - 100) / iconH)
+    setIcons((prev) =>
+      prev.map((ic, i) => ({
+        ...ic,
+        x: settings.desktopPadding + Math.floor(i / perRow) * (iconW + 20),
+        y: settings.desktopPadding + (i % perRow) * iconH,
+      }))
+    )
+  }, [settings])
 
   const confirmResetAction = useCallback(() => {
     setIcons(DEFAULT_ICONS)
@@ -127,18 +139,14 @@ export default function Desktop() {
     setConfirmReset(false)
   }, [])
 
-  // 4. معالجة الأيقونات
   const handleSaveIcon = useCallback(async (icon: DesktopIcon) => {
-    let displayIcon = icon
     if (icon.image && icon.image.startsWith('data:')) {
       await saveIconBlob(icon.id, icon.image)
     }
     setIcons((prev) => {
       const idx = prev.findIndex((ic) => ic.id === icon.id)
       if (idx >= 0) {
-        const updated = [...prev]
-        updated[idx] = icon
-        return updated
+        const updated = [...prev]; updated[idx] = icon; return updated
       }
       return [...prev, icon]
     })
@@ -146,12 +154,13 @@ export default function Desktop() {
   }, [])
 
   if (!mounted) return null
+  const contextIcon = contextMenu?.iconId ? icons.find(i => i.id === contextMenu.iconId) : null
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-black" style={{ direction: lang === 'ar' ? 'rtl' : 'ltr' }}>
+    <div className="fixed inset-0 overflow-hidden bg-black" style={{ direction: settings.language === 'ar' ? 'rtl' : 'ltr' }}>
       
-      {/* الخلفية النقية */}
-      <div className="absolute inset-0 z-0">
+      {/* طبقة الخلفية: نقية تماماً بدون Overlay */}
+      <div className="absolute inset-0 z-0 pointer-events-none">
         {settings.wallpaper?.match(/\.(mp4|webm)$/i) || settings.wallpaper?.includes('video') ? (
           <video key={settings.wallpaper} src={settings.wallpaper} autoPlay loop muted playsInline className="w-full h-full object-cover" />
         ) : (
@@ -169,45 +178,39 @@ export default function Desktop() {
       {/* الشريط العلوي */}
       <div className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2 bg-black/20 border-b border-white/5">
         <div className="text-white font-medium text-sm">{t(lang, 'appName')}</div>
-        <div className="flex items-center gap-2">
-           <button onClick={() => setShowSearch(true)} className="p-1 text-white/70 hover:text-white">
-             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth={2}/></svg>
-           </button>
-           <button onClick={() => setShowSettings(true)} className="p-1 text-white/70 hover:text-white">
-             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" strokeWidth={2}/></svg>
-           </button>
+        <div className="flex gap-2">
+           <button onClick={() => setShowSearch(true)} className="p-1 text-white/70 hover:text-white"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" strokeWidth={2}/></svg></button>
+           <button onClick={() => setShowSettings(true)} className="p-1 text-white/70 hover:text-white"><svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" strokeWidth={2}/></svg></button>
         </div>
       </div>
 
-      {/* القوائم */}
+      {/* قائمة الزر الأيمن المصلحة */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x} y={contextMenu.y} type={contextMenu.type} settings={settings} lang={lang}
           onAddIcon={() => setEditModal({ mode: 'add', spawnX: contextMenu.x, spawnY: contextMenu.y })}
-          onEditIcon={() => {
-             const ic = icons.find(i => i.id === contextMenu.iconId);
-             if(ic) setEditModal({ mode: 'edit', icon: ic });
-          }}
-          onDeleteIcon={() => setIcons(prev => prev.filter(i => i.id !== contextMenu.iconId))}
+          onEditIcon={() => contextIcon && setEditModal({ mode: 'edit', icon: contextIcon })}
+          onDeleteIcon={() => contextMenu.iconId && setIcons(prev => prev.filter(i => i.id !== contextMenu.iconId))}
+          onOpenLink={() => contextIcon && window.open(contextIcon.url, '_blank')}
+          onAutoAlign={handleAutoAlign}
           onExport={handleExport}
           onImport={() => importFileRef.current?.click()}
           onResetDesktop={() => setConfirmReset(true)}
           onClose={() => setContextMenu(null)}
-          onAutoAlign={() => {}} onOpenLink={() => {}}
         />
       )}
 
       {showSettings && <SettingsPanel settings={settings} lang={lang} onSettingsChange={(s) => setSettings(p => ({...p, ...s, wallpaperBlur: 0}))} onClose={() => setShowSettings(false)} />}
-      {editModal && <IconModal mode={editModal.mode} icon={editModal.icon} settings={settings} lang={lang} onSave={handleSaveIcon} onClose={() => setEditModal(null)} />}
+      {editModal && <IconModal mode={editModal.mode} icon={editModal.icon} settings={settings} lang={lang} spawnX={editModal.spawnX} spawnY={editModal.spawnY} onSave={handleSaveIcon} onClose={() => setEditModal(null)} />}
       
-      {/* نافذة تأكيد إعادة الضبط */}
+      {/* نافذة التأكيد */}
       {confirmReset && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="p-6 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl text-center space-y-4">
+          <div className="p-6 bg-[#1a1a1a] border border-white/10 rounded-2xl text-center space-y-4 shadow-2xl">
             <p className="text-white/80">{t(lang, 'confirmReset')}</p>
             <div className="flex gap-2">
-              <button onClick={() => setConfirmReset(false)} className="flex-1 px-4 py-2 bg-white/5 text-white rounded-lg">لا</button>
-              <button onClick={confirmResetAction} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">نعم</button>
+              <button onClick={() => setConfirmReset(false)} className="flex-1 px-4 py-2 bg-white/5 text-white rounded-lg">إلغاء</button>
+              <button onClick={confirmResetAction} className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg">تأكيد المسح</button>
             </div>
           </div>
         </div>
