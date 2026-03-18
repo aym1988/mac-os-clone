@@ -35,11 +35,11 @@ export default function Desktop() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
   const [selectedIconId, setSelectedIconId] = useState<string | null>(null)
-  const [confirmReset, setConfirmReset] = useState(false)
 
   const importFileRef = useRef<HTMLInputElement>(null)
   const lang: Language = settings.language
 
+  // 1. استعادة البيانات عند التشغيل وضبط النقاء
   useEffect(() => {
     const initDesktop = async () => {
       const savedIcons = loadIcons()
@@ -57,12 +57,14 @@ export default function Desktop() {
       
       setIcons(resolvedIcons)
 
+      // إلغاء الضبابية (Blur) تماماً عند التحميل لضمان نقاء الخلفية
+      const pureSettings = { ...savedSettings, wallpaperBlur: 0 };
+
       if (savedSettings.wallpaper === '__idb__') {
         const blob = await loadWallpaperBlob()
-        setSettings({ ...savedSettings, wallpaper: blob ?? DEFAULT_SETTINGS.wallpaper, wallpaperBlur: 0 })
+        setSettings({ ...pureSettings, wallpaper: blob ?? DEFAULT_SETTINGS.wallpaper })
       } else {
-        // إجبار البروز (Blur) على 0 لضمان النقاء
-        setSettings({ ...savedSettings, wallpaperBlur: 0 })
+        setSettings(pureSettings)
       }
       setMounted(true)
     }
@@ -70,6 +72,7 @@ export default function Desktop() {
     initDesktop()
   }, [])
 
+  // 2. حفظ الأيقونات في IndexedDB
   useEffect(() => {
     const persist = async () => {
       if (!mounted) return
@@ -83,6 +86,7 @@ export default function Desktop() {
     persist()
   }, [icons, mounted])
 
+  // 3. حفظ الإعدادات والخلفية
   useEffect(() => {
     if (!mounted) return
     saveSettings(settings)
@@ -92,7 +96,7 @@ export default function Desktop() {
   }, [settings, mounted])
 
   const handleSettingsChange = useCallback((partial: Partial<DesktopSettings>) => {
-    // نمنع أي محاولة لإضافة ضبابية برمجياً
+    // منع إضافة أي ضبابية من خلال الإعدادات للحفاظ على جودة الصورة
     if ('wallpaperBlur' in partial) partial.wallpaperBlur = 0;
     setSettings((prev) => ({ ...prev, ...partial }))
   }, [])
@@ -141,18 +145,15 @@ export default function Desktop() {
   const contextIcon = contextIconId ? icons.find((ic) => ic.id === contextIconId) : null
 
   return (
-    <div className="fixed inset-0 overflow-hidden" style={{ direction: rtl ? 'rtl' : 'ltr' }}>
+    <div className="fixed inset-0 overflow-hidden bg-black" style={{ direction: rtl ? 'rtl' : 'ltr' }}>
       
-      {/* طبقة الخلفية: نقية تماماً بدون فلاتر */}
+      {/* طبقة الخلفية: نقية 100% وبدون أي طبقات تلوين (Overlay) */}
       <div className="absolute inset-0 z-0">
         {settings.wallpaper?.includes('video') || settings.wallpaper?.match(/\.(mp4|webm)$/i) ? (
           <video
             key={settings.wallpaper}
             src={settings.wallpaper}
-            autoPlay
-            loop
-            muted
-            playsInline
+            autoPlay loop muted playsInline
             className="w-full h-full object-cover"
           />
         ) : (
@@ -163,7 +164,7 @@ export default function Desktop() {
         )}
       </div>
 
-      {/* تمت إزالة طبقة الـ Overlay اللونية هنا لضمان نقاء الألوان */}
+      {/* تمت إزالة طبقة التظليل تماماً لضمان عدم تحول اللون الأسود إلى رصاصي */}
       
       <ClockWidget lang={lang} isDark={true} />
       <StickyNoteWidget />
@@ -180,30 +181,29 @@ export default function Desktop() {
         onDesktopClick={() => { setSelectedIconId(null); setContextMenu(null) }}
       />
 
-      {/* الشريط العلوي شفاف تماماً لعدم التشويش على الفيديو */}
+      {/* الشريط العلوي: شفاف بنسبة بسيطة جداً للحفاظ على مظهر الخلفية */}
       <div
         className="absolute top-0 left-0 right-0 z-20 flex items-center justify-between px-4 py-2"
         style={{
-          background: 'rgba(0,0,0,0.15)', // شفافية خفيفة جداً للقراءة فقط
-          backdropFilter: 'none', // إزالة الضبابية من الشريط العلوي أيضاً
+          background: 'rgba(0,0,0,0.1)', 
           borderBottom: '1px solid rgba(255,255,255,0.05)',
         }}
       >
         <div className="flex items-center gap-3">
-          <span className="text-white font-medium text-sm shadow-sm">{t(lang, 'appName')}</span>
+          <span className="text-white/90 font-medium text-sm">{t(lang, 'appName')}</span>
         </div>
 
         <div className="flex items-center gap-2">
-          <TopBarButton onClick={() => setShowSearch(true)} title={t(lang, 'search')}>
+          <button onClick={() => setShowSearch(true)} className="p-1.5 text-white/70 hover:text-white transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-          </TopBarButton>
-          <TopBarButton onClick={() => setShowSettings(true)} title={t(lang, 'settings')}>
+          </button>
+          <button onClick={() => setShowSettings(true)} className="p-1.5 text-white/70 hover:text-white transition-colors">
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-          </TopBarButton>
+          </button>
         </div>
       </div>
 
-      {/* باقي المكونات (قائمة السياق، الإعدادات، إلخ) */}
+      {/* المكونات الإضافية */}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x} y={contextMenu.y} type={contextMenu.type} settings={settings} lang={lang}
@@ -211,7 +211,7 @@ export default function Desktop() {
           onEditIcon={() => contextIcon && setEditModal({ mode: 'edit', icon: contextIcon })}
           onDeleteIcon={() => contextIconId && handleDeleteIcon(contextIconId)}
           onClose={() => setContextMenu(null)}
-          onAutoAlign={() => {}} onResetDesktop={() => setConfirmReset(true)} onExport={() => {}} onImport={() => {}} onOpenLink={() => {}}
+          onAutoAlign={() => {}} onResetDesktop={() => {}} onExport={() => {}} onImport={() => {}} onOpenLink={() => {}}
         />
       )}
 
@@ -219,13 +219,5 @@ export default function Desktop() {
       {editModal && <IconModal mode={editModal.mode} icon={editModal.icon} settings={settings} lang={lang} spawnX={editModal.spawnX} spawnY={editModal.spawnY} onSave={handleSaveIcon} onDelete={handleDeleteIcon} onClose={() => setEditModal(null)} />}
       {showSearch && <SearchBar icons={icons} settings={settings} lang={lang} onSelect={(ic) => { setSelectedIconId(ic.id); if (ic.url) window.open(ic.url, '_blank') }} onClose={() => setShowSearch(false)} />}
     </div>
-  )
-}
-
-function TopBarButton({ children, onClick, title }: { children: React.ReactNode; onClick: () => void; title?: string }) {
-  return (
-    <button onClick={onClick} title={title} className="w-7 h-7 rounded-lg flex items-center justify-center text-white/90 hover:bg-white/20 transition-colors">
-      {children}
-    </button>
   )
 }
